@@ -51,12 +51,13 @@ def get_conference_urls(start_year, end_year):
     ]
 
 
-def get_talk_urls(conference_url, year, month, session):
+def get_talk_urls(conference_url, year, month, session, failures):
     """Extract individual talk URLs from a conference index page."""
     try:
         response = session.get(conference_url, timeout=10)
         response.raise_for_status()
-    except Exception:
+    except Exception as e:
+        failures.append((conference_url, f'index page failed: {e}'))
         return []
 
     response.encoding = 'utf-8'
@@ -91,12 +92,13 @@ def get_talk_urls(conference_url, year, month, session):
     return talk_urls
 
 
-def scrape_talk(talk_url, session):
+def scrape_talk(talk_url, session, failures):
     """Scrape a single talk page and return structured data."""
     try:
         response = session.get(talk_url, timeout=10)
         response.raise_for_status()
-    except Exception:
+    except Exception as e:
+        failures.append((talk_url, f'page failed: {e}'))
         return None
 
     response.encoding = 'utf-8'
@@ -112,6 +114,7 @@ def scrape_talk(talk_url, session):
 
     content_div = soup.find("div", {"class": "body-block"})
     if not content_div:
+        failures.append((talk_url, 'no body-block found (not a talk page, or the layout changed)'))
         return None
 
     content = " ".join(p.text.strip() for p in content_div.find_all("p"))
@@ -138,12 +141,13 @@ def main():
 
     session = setup_session()
     conference_urls = get_conference_urls(START_YEAR, END_YEAR)
+    failures = []  # (url, reason) for everything that didn't make it
 
     # Phase 1: Find all talk URLs
     print("\nFinding talk URLs...")
     all_talk_urls = []
     for conf_url, year, month in tqdm(conference_urls, desc="Conferences"):
-        urls = get_talk_urls(conf_url, year, month, session)
+        urls = get_talk_urls(conf_url, year, month, session, failures)
         all_talk_urls.extend(urls)
     print(f"Found {len(all_talk_urls)} talks\n")
 
@@ -151,11 +155,20 @@ def main():
     print("Scraping talk content...")
     talks_data = []
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(scrape_talk, url, session): url for url in all_talk_urls}
+        futures = {executor.submit(scrape_talk, url, session, failures): url for url in all_talk_urls}
         for future in tqdm(as_completed(futures), total=len(all_talk_urls), desc="Scraping"):
             talk = future.result()
             if talk:
                 talks_data.append(talk)
+
+    # Report every failure, so a short count is never a mystery
+    print(f"\nScraped {len(talks_data)} of {len(all_talk_urls)} talk URLs.")
+    if failures:
+        print(f"{len(failures)} problem(s):")
+        for url, reason in failures:
+            print(f"   ✕ {url}\n     {reason}")
+    else:
+        print("No problems.")
 
     if not talks_data:
         print("\n❌ No talks scraped! Check your internet connection or website structure.")
