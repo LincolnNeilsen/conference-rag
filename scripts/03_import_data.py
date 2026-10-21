@@ -48,10 +48,16 @@ def load_config():
     return public_config, secrets
 
 
+# Abbreviations whose period does NOT end a sentence. Add to this list as needed.
+ABBREVIATIONS = ['Dr', 'Mr', 'Mrs', 'Ms', 'St', 'Jr', 'Sr', 'vs', 'e.g', 'i.e']
+
+
 def split_into_sentences(text):
-    """Split text into sentences using a simple heuristic."""
-    sentences = re.split(r'\. (?=[A-Z])', text)
-    sentences = [s.strip() + '.' if not s.endswith('.') else s.strip() for s in sentences]
+    """Split text into sentences, keeping abbreviations like 'Dr.' and 'e.g.' intact."""
+    for abbrev in ABBREVIATIONS:
+        text = re.sub(rf'\b{re.escape(abbrev)}\.', abbrev + '<DOT>', text)
+    sentences = re.split(r'(?<=[.!?]) (?=[A-Z"])', text)
+    sentences = [s.replace('<DOT>', '.').strip() for s in sentences]
     return [s for s in sentences if len(s) > 20]
 
 
