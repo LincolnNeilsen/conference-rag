@@ -132,6 +132,23 @@
                     </div>
                     <div class="search-results" id="rag-results"></div>
                 </div>
+
+                <!-- Panel 4: Compare chunking strategies -->
+                <div class="search-panel compare-panel" id="compare-panel">
+                    <div class="panel-header">
+                        <h3>⚖️ Compare Chunking</h3>
+                        <span class="status-badge not-ready" id="compare-status">🔴 Not Ready</span>
+                    </div>
+                    <p class="panel-description">One question, three chunking strategies: single sentences, sentences
+                        with neighbors, and whole paragraphs. Each column shows its top matches and its own AI answer.
+                        Requires semantic search and paragraph data.</p>
+                    <div class="panel-input">
+                        <input type="text" id="compare-input" placeholder="Ask one question for all three..."
+                            autocomplete="off" disabled />
+                        <button id="compare-btn" class="btn-primary" disabled>Compare</button>
+                    </div>
+                    <div class="compare-grid" id="compare-results"></div>
+                </div>
             </div>
         </div>
     </div>

@@ -117,6 +117,7 @@ def scrape_talk(talk_url, session, failures):
         failures.append((talk_url, 'no body-block found (not a talk page, or the layout changed)'))
         return None
 
+    paragraphs = [p.text.strip() for p in content_div.find_all("p") if len(p.text.strip()) >= 40]
     content = " ".join(p.text.strip() for p in content_div.find_all("p"))
 
     year_match = re.search(r'/(\d{4})/', talk_url)
@@ -130,7 +131,8 @@ def scrape_talk(talk_url, session, failures):
         "year": year,
         "season": season,
         "url": talk_url,
-        "text": content
+        "text": content,
+        "paragraphs": paragraphs
     }
 
 

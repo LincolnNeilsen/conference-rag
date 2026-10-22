@@ -84,6 +84,10 @@ const ragBtn = document.getElementById('rag-btn');
 const ragResults = document.getElementById('rag-results');
 const ragStatus = document.getElementById('rag-status');
 
+const compareInput = document.getElementById('compare-input');
+const compareBtn = document.getElementById('compare-btn');
+const compareResults = document.getElementById('compare-results');
+
 // ============================================
 // SETUP BANNER DETECTION
 // ============================================
@@ -357,6 +361,7 @@ async function checkSearchReadiness() {
             }
         }
         setSearchReady('semantic', semanticReady);
+        setSearchReady('compare', semanticReady);
 
         // --- 1 generate-answer call (only if semantic pipeline is ready) ---
         if (!semanticReady) {
@@ -588,6 +593,159 @@ async function askQuestion() {
 }
 
 // ============================================
+// COMPARE CHUNKING STRATEGIES
+// ============================================
+
+const COMPARE_K = 5;    // passages per column, so every strategy gets the same number
+const WINDOW_SIZE = 2;  // sentences kept on each side of a matched sentence
+
+const STRATEGIES = [
+    { key: 'sentence', label: 'Sentences', description: 'Single matching sentences' },
+    { key: 'window', label: 'Sentences + neighbors', description: 'Each match with 2 sentences on either side' },
+    { key: 'paragraph', label: 'Paragraphs', description: 'Whole matching paragraphs' },
+];
+
+// Run one strategy and capture its error, so one failure doesn't blank the other columns
+async function settle(fn) {
+    try {
+        return { value: await fn() };
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+// Sentence strategy: the top matching sentences as they are
+function sentencePassages(matches) {
+    return matches.slice(0, COMPARE_K).map(m => ({
+        title: m.title, speaker: m.speaker, url: m.url,
+        text: m.text, similarity: m.similarity
+    }));
+}
+
+// Window strategy: each top sentence, widened with its neighbors from the same talk
+async function windowPassages(matches) {
+    const top = matches.slice(0, COMPARE_K);
+
+    const { data: located, error } = await supabaseClient
+        .from('sentence_embeddings')
+        .select('id, talk_id, sentence_num')
+        .in('id', top.map(m => m.id));
+    if (error) throw new Error(`Window lookup failed: ${error.message}`);
+    const position = Object.fromEntries(located.map(row => [row.id, row]));
+
+    return Promise.all(top.map(async m => {
+        const pos = position[m.id];
+        const { data, error: windowError } = await supabaseClient
+            .from('sentence_embeddings')
+            .select('sentence_num, text')
+            .eq('talk_id', pos.talk_id)
+            .gte('sentence_num', pos.sentence_num - WINDOW_SIZE)
+            .lte('sentence_num', pos.sentence_num + WINDOW_SIZE)
+            .order('sentence_num');
+        if (windowError) throw new Error(`Window lookup failed: ${windowError.message}`);
+        return {
+            title: m.title, speaker: m.speaker, url: m.url,
+            text: data.map(row => row.text).join(' '),
+            similarity: m.similarity
+        };
+    }));
+}
+
+// Paragraph strategy: similarity search over paragraph_embeddings
+async function paragraphPassages(embedding) {
+    const { data, error } = await supabaseClient.rpc('match_paragraphs', {
+        query_embedding: embedding,
+        match_count: COMPARE_K
+    });
+    if (error) throw new Error(`Paragraph search failed: ${error.message}`);
+    return data.map(p => ({
+        title: p.title, speaker: p.speaker, url: p.url,
+        text: p.text, similarity: p.similarity
+    }));
+}
+
+async function compareSearch() {
+    const question = compareInput ? compareInput.value.trim() : '';
+    if (!question || !supabaseClient) return;
+
+    showLoading(true);
+    showCompare('<div class="searching">Comparing three strategies...</div>');
+
+    try {
+        const embedding = await getEmbedding(question);
+        const sentenceMatches = await searchSentences(embedding);
+
+        // Find the passages for each strategy, then ask the model once per strategy
+        const found = await Promise.all([
+            settle(async () => sentencePassages(sentenceMatches)),
+            settle(() => windowPassages(sentenceMatches)),
+            settle(() => paragraphPassages(embedding)),
+        ]);
+
+        const columns = await Promise.all(STRATEGIES.map(async (strategy, i) => {
+            const result = found[i];
+            if (result.error) return { ...strategy, error: result.error };
+            const passages = result.value;
+            if (passages.length === 0) return { ...strategy, passages, empty: true };
+
+            const answer = await settle(() => generateAnswer(
+                question,
+                passages.map(p => ({ title: p.title, speaker: p.speaker, text: p.text }))
+            ));
+            return { ...strategy, passages, answer };
+        }));
+
+        showCompare(columns.map(renderCompareColumn).join(''));
+
+    } catch (error) {
+        showCompare(`<div class="result-error">Error: ${escapeHtml(error.message)}</div>`);
+    } finally {
+        showLoading(false);
+    }
+}
+
+function renderCompareColumn(col) {
+    const header = `<div class="compare-header">
+        <div class="compare-label">${escapeHtml(col.label)}</div>
+        <div class="compare-desc">${escapeHtml(col.description)}</div>
+    </div>`;
+
+    if (col.error) {
+        return `<div class="compare-column">${header}<div class="result-error">Error: ${escapeHtml(col.error)}</div></div>`;
+    }
+    if (col.empty) {
+        return `<div class="compare-column">${header}<div class="no-results">No matches found.</div></div>`;
+    }
+
+    const answer = col.answer.error
+        ? `<div class="result-error">AI answer failed: ${escapeHtml(col.answer.error)}</div>`
+        : `<div class="result-card rag-answer"><div class="result-sentences">${escapeHtml(col.answer.value)}</div></div>`;
+
+    const passages = col.passages.map(p => `<div class="result-card">
+            <div class="result-card-header">
+                <div>
+                    <div class="result-title"><a href="${escapeHtml(p.url)}" target="_blank" class="result-title-link">${escapeHtml(p.title)}</a></div>
+                    <div class="result-speaker">by ${escapeHtml(p.speaker)}</div>
+                </div>
+                ${similarityBadge(p.similarity)}
+            </div>
+            <div class="result-sentences">${escapeHtml(p.text)}</div>
+        </div>`).join('');
+
+    return `<div class="compare-column">
+        ${header}
+        <div class="compare-section-label">AI answer</div>
+        ${answer}
+        <div class="compare-section-label">Top ${col.passages.length} matches</div>
+        ${passages}
+    </div>`;
+}
+
+function showCompare(html) {
+    if (compareResults) compareResults.innerHTML = html;
+}
+
+// ============================================
 // SHARED SEARCH UTILITIES
 // ============================================
 
@@ -758,6 +916,12 @@ if (semanticInput) semanticInput.addEventListener('keypress', (e) => {
 if (ragBtn) ragBtn.addEventListener('click', askQuestion);
 if (ragInput) ragInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') askQuestion();
+});
+
+// Compare chunking strategies
+if (compareBtn) compareBtn.addEventListener('click', compareSearch);
+if (compareInput) compareInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') compareSearch();
 });
 
 // ============================================
