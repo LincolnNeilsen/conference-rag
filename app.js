@@ -313,6 +313,14 @@ function showLoading(show) {
 // Guard against double execution (checkSession + onAuthStateChange both call showApp)
 let readinessCheckRunning = false;
 
+// A function counts as deployed only if it answered over HTTP with a status other than 404.
+// Network and CORS failures have no status, so they don't count.
+function functionResponded(error) {
+    if (!error) return true;
+    const status = error.context?.status;
+    return status !== undefined && status !== 404;
+}
+
 async function checkSearchReadiness() {
     if (!supabaseClient || readinessCheckRunning) return;
     readinessCheckRunning = true;
@@ -343,7 +351,7 @@ async function checkSearchReadiness() {
                 const { data, error: fnError } = await supabaseClient.functions.invoke('embed-question', {
                     body: { question: 'test' }
                 });
-                semanticReady = !fnError;
+                semanticReady = functionResponded(fnError);
             } catch {
                 // CORS or network error → function not deployed
             }
@@ -358,7 +366,7 @@ async function checkSearchReadiness() {
                 const { data, error: fnError } = await supabaseClient.functions.invoke('generate-answer', {
                     body: { question: 'test', context_talks: [] }
                 });
-                setSearchReady('rag', !fnError || fnError.context?.status !== 404);
+                setSearchReady('rag', functionResponded(fnError));
             } catch {
                 setSearchReady('rag', false);
             }
