@@ -88,6 +88,10 @@ const compareInput = document.getElementById('compare-input');
 const compareBtn = document.getElementById('compare-btn');
 const compareResults = document.getElementById('compare-results');
 
+const multiInput = document.getElementById('multi-input');
+const multiBtn = document.getElementById('multi-btn');
+const multiResults = document.getElementById('multi-results');
+
 // ============================================
 // SETUP BANNER DETECTION
 // ============================================
@@ -362,6 +366,7 @@ async function checkSearchReadiness() {
         }
         setSearchReady('semantic', semanticReady);
         setSearchReady('compare', semanticReady);
+        setSearchReady('multi', semanticReady);
 
         // --- 1 generate-answer call (only if semantic pipeline is ready) ---
         if (!semanticReady) {
@@ -746,6 +751,69 @@ function showCompare(html) {
 }
 
 // ============================================
+// MULTI-QUERY SEARCH (PARAGRAPHS)
+// ============================================
+
+// The server rewrites the question, searches paragraphs for each phrasing,
+// merges the results, and answers. See supabase/functions/multi-query-search.
+async function multiQuerySearch() {
+    const question = multiInput ? multiInput.value.trim() : '';
+    if (!question || !supabaseClient) return;
+
+    showLoading(true);
+    showMulti('<div class="searching">Rewriting, searching, and merging...</div>');
+
+    try {
+        const { data, error } = await supabaseClient.functions.invoke('multi-query-search', {
+            body: { question }
+        });
+        if (error) {
+            throw new Error(data?.error || 'Multi-query search failed');
+        }
+        showMulti(renderMulti(data));
+
+    } catch (error) {
+        showMulti(`<div class="result-error">Error: ${escapeHtml(error.message)}</div>`);
+    } finally {
+        showLoading(false);
+    }
+}
+
+// data: { answer, phrasings, passages } from multi-query-search
+function renderMulti(data) {
+    const phrasings = data.phrasings.map((text, i) => {
+        const label = i === 0 ? 'Your question' : `Rewrite ${i}`;
+        return `<div class="compare-section-label">${label}</div>
+            <div class="result-sentences">${escapeHtml(text)}</div>`;
+    }).join('');
+
+    const passages = data.passages.map(p => `<div class="result-card">
+            <div class="result-card-header">
+                <div>
+                    <div class="result-title"><a href="${escapeHtml(p.url)}" target="_blank" class="result-title-link">${escapeHtml(p.title)}</a></div>
+                    <div class="result-speaker">by ${escapeHtml(p.speaker)}</div>
+                </div>
+                ${similarityBadge(p.similarity)}
+            </div>
+            <div class="result-sentences">${escapeHtml(p.text)}</div>
+            <div class="result-speaker">Found by ${p.hits} of ${data.phrasings.length} phrasings</div>
+        </div>`).join('');
+
+    return `<div class="compare-column">
+        <div class="compare-section-label">AI answer</div>
+        <div class="result-card rag-answer"><div class="result-sentences">${escapeHtml(data.answer)}</div></div>
+        <div class="compare-section-label">Phrasings searched</div>
+        ${phrasings}
+        <div class="compare-section-label">Merged paragraphs (top ${data.passages.length})</div>
+        ${passages}
+    </div>`;
+}
+
+function showMulti(html) {
+    if (multiResults) multiResults.innerHTML = html;
+}
+
+// ============================================
 // SHARED SEARCH UTILITIES
 // ============================================
 
@@ -922,6 +990,12 @@ if (ragInput) ragInput.addEventListener('keypress', (e) => {
 if (compareBtn) compareBtn.addEventListener('click', compareSearch);
 if (compareInput) compareInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') compareSearch();
+});
+
+// Multi-query search
+if (multiBtn) multiBtn.addEventListener('click', multiQuerySearch);
+if (multiInput) multiInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') multiQuerySearch();
 });
 
 // ============================================

@@ -149,6 +149,23 @@
                     </div>
                     <div class="compare-grid" id="compare-results"></div>
                 </div>
+
+                <!-- Panel 5: Multi-query search over paragraphs -->
+                <div class="search-panel" id="multi-panel">
+                    <div class="panel-header">
+                        <h3>🧩 Multi-Query Search</h3>
+                        <span class="status-badge not-ready" id="multi-status">🔴 Not Ready</span>
+                    </div>
+                    <p class="panel-description">Rewrites your question three ways, searches paragraphs for each,
+                        merges the results, and answers from the merged set. Requires the multi-query-search Edge
+                        Function.</p>
+                    <div class="panel-input">
+                        <input type="text" id="multi-input" placeholder="Ask a question..." autocomplete="off"
+                            disabled />
+                        <button id="multi-btn" class="btn-primary" disabled>Search</button>
+                    </div>
+                    <div class="search-results" id="multi-results"></div>
+                </div>
             </div>
         </div>
     </div>
